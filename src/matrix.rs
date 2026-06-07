@@ -1,13 +1,16 @@
+use crate::Args;
+use crate::logger::Logger;
+use crate::pattern::Pattern;
 use crossterm::event::{Event, KeyCode};
-use crossterm::style::{
-    Attribute, Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor,
-};
-use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::style::{Color, Print, SetBackgroundColor};
+use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{QueueableCommand, cursor, event, execute, terminal};
-use rand::random_range;
+use rand::{random_bool, random_range};
 use std::io::{Stdout, Write, stdout};
+use std::ops::Add;
+use std::time::{Duration, Instant};
 
-static CHARSET: &[char] = &[
+pub static CHARSET: &[char] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
     'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b',
     'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u',
@@ -16,94 +19,124 @@ static CHARSET: &[char] = &[
 
 pub struct Matrix {
     out: Stdout,
-    cols: u16,
-    rows: u16,
-    buffer: Vec<Vec<char>>,
+    cols: usize,
+    rows: usize,
+    patterns: Vec<Pattern>,
     background: Color,
-    foreground: Color,
+    logger: Logger,
+
+    timer: Duration,
+    last_tick: Instant,
+
+    speed: Duration,
+    pattern_spawn_rate: f64,
+
+    args: Args,
 }
 
 impl Matrix {
-    pub fn new() -> Self {
+    pub fn new(args: Args) -> Self {
         let (cols, rows) = terminal::size().unwrap();
+        let cols = cols as usize;
+        let rows = rows as usize;
         terminal::enable_raw_mode().unwrap();
         execute!(stdout(), EnterAlternateScreen, cursor::Hide).unwrap();
 
         Self {
             out: stdout(),
-            buffer: vec![vec![' '; rows as usize]; cols as usize],
+            patterns: vec![],
             cols,
             rows,
             background: Color::Black,
-            foreground: Color::Green,
+            logger: Logger::new(),
+
+            timer: Duration::ZERO,
+            last_tick: Instant::now(),
+
+            speed: Duration::from_millis(args.speed),
+            pattern_spawn_rate: args.spawn,
+
+            args,
         }
     }
 
     fn cleanup(&mut self) {
-        execute!(stdout(), LeaveAlternateScreen).unwrap();
+        execute!(stdout(), LeaveAlternateScreen, cursor::Show).unwrap();
         terminal::disable_raw_mode().unwrap();
     }
 
     fn clear(&mut self) {
-        self.buffer = vec![vec![' '; self.rows as usize]; self.cols as usize];
+        self.out
+            .queue(terminal::Clear(terminal::ClearType::All))
+            .unwrap();
     }
 
     fn handle_events(&mut self) {
         if event::poll(std::time::Duration::from_millis(0)).unwrap() {
-            if let Event::Key(key) = event::read().unwrap() {
-                // exit
-                if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
-                    self.cleanup();
-                    std::process::exit(0);
+            match event::read().unwrap() {
+                Event::Key(key) => {
+                    if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+                        self.cleanup();
+                        std::process::exit(0);
+                    }
                 }
+                Event::Resize(ncols, nrows) => {
+                    self.cols = ncols as usize;
+                    self.rows = nrows as usize;
+                }
+                _ => {}
             }
-        }
-    }
-
-    fn handle_resize(&mut self) {
-        let (ncols, nrows) = terminal::size().unwrap();
-        let change_cols = ncols - self.cols;
-        let change_rows = nrows - self.rows;
-
-        if change_rows + change_cols == 0 {
-            return;
         }
     }
 
     fn flush(&mut self) {
-        self.out.queue(SetBackgroundColor(self.background)).unwrap();
-        self.out.queue(SetForegroundColor(self.foreground)).unwrap();
         self.out.flush().unwrap();
     }
 
-    fn place(&mut self) {
-        let c = random_range(0..self.cols as usize);
-        let r = random_range(0..self.rows as usize);
-        let mut char = CHARSET[random_range(0..CHARSET.len())];
-
-        if self.buffer[c][r] != ' ' {
-            char = ' '
-        }
-        self.buffer[c][r] = char;
+    fn add_pattern(&mut self) {
+        self.patterns
+            .push(Pattern::new(&self.args, self.cols, self.rows));
     }
 
-    fn write(&mut self) {
-        for c in 0..self.cols {
-            for r in 0..self.rows {
-                self.out.queue(cursor::MoveTo(c, r)).unwrap();
-                self.out
-                    .queue(Print(self.buffer[c as usize][r as usize]))
-                    .unwrap();
-            }
+    fn draw_patterns(&mut self) {
+        for p in &mut self.patterns {
+            p.draw(&mut self.out, self.cols, self.rows);
         }
+    }
+
+    fn mv_patterns(&mut self) {
+        for p in &mut self.patterns {
+            p.mv(&mut self.out);
+        }
+    }
+
+    fn tick(&mut self) {
+        let now = Instant::now();
+        let dt = now - self.last_tick;
+        self.last_tick = now;
+        self.timer = self.timer.add(dt);
+    }
+
+    fn draw(&mut self) {
+        self.draw_patterns();
     }
 
     pub fn run(&mut self) {
+        self.out.queue(SetBackgroundColor(self.background)).unwrap();
+        self.clear();
         loop {
-            self.handle_resize();
             self.handle_events();
-            self.place();
-            self.write();
+            self.tick();
+
+            if self.timer > self.speed {
+                self.timer = Duration::ZERO;
+                self.mv_patterns();
+                if random_bool(self.pattern_spawn_rate) {
+                    self.add_pattern();
+                }
+            }
+
+            self.draw();
             self.flush();
         }
     }
