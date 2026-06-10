@@ -7,7 +7,7 @@ use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{QueueableCommand, cursor, event, execute, terminal};
 use rand::{random_bool, random_range};
 use std::io::{Stdout, Write, stdout};
-use std::ops::Add;
+use std::ops::{Add, Index};
 use std::time::{Duration, Instant};
 
 pub static CHARSET: &[char] = &[
@@ -83,6 +83,7 @@ impl Matrix {
                 Event::Resize(ncols, nrows) => {
                     self.cols = ncols as usize;
                     self.rows = nrows as usize;
+                    self.clear();
                 }
                 _ => {}
             }
@@ -110,6 +111,11 @@ impl Matrix {
         }
     }
 
+    fn cull(&mut self) {
+        self.patterns
+            .retain(|p| p.row.saturating_sub(p.length) <= self.rows);
+    }
+
     fn tick(&mut self) {
         let now = Instant::now();
         let dt = now - self.last_tick;
@@ -131,9 +137,12 @@ impl Matrix {
             if self.timer > self.speed {
                 self.timer = Duration::ZERO;
                 self.mv_patterns();
-                if random_bool(self.pattern_spawn_rate) {
-                    self.add_pattern();
+                if random_bool(self.pattern_spawn_rate.min(1.).max(0.)) {
+                    for _ in 0..self.pattern_spawn_rate.ceil() as i32 {
+                        self.add_pattern();
+                    }
                 }
+                self.cull();
             }
 
             self.draw();

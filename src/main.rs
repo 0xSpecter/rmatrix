@@ -36,8 +36,8 @@ pub struct Args {
     #[arg(short, long, default_value_t = 35)]
     pub speed: u64,
 
-    /// spawn rate of streaks [0.1 - 1.0]
-    #[arg(long, default_value_t = 0.9)]
+    /// spawn rate of streaks default is 1
+    #[arg(long, default_value_t = 1.)]
     pub spawn: f64,
 }
 
