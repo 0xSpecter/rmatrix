@@ -1,20 +1,18 @@
 # rmatrix
 
-A Matrix digital rain effect for your terminal, written in Rust. Inspired by the classic `cmatrix`, but with more color modes, character styles, and tunable parameters.
+A `cmatrix` copy written in rust with more tunable paramaters.
 
 ---
 
-## Features
-
 ## Installation
 
+To run (debug)
+
 ```
-git clone https://github.com/specter/rmatrix
-cd rmatrix
-cargo build --release
+cargo run
 ```
 
-The binary will be at `target/release/rmatrix`. Optionally install it system-wide:
+System-wide build and installation. remember to add `cargo/bin` to PATH
 
 ```
 cargo install --path .
