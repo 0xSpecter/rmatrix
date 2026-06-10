@@ -139,7 +139,7 @@ impl Pattern {
                     Apperance::StaticRainbow => {
                         self.color.insert(0, COLORS[random_range(0..COLORS.len())])
                     }
-                    _ => (),
+                    _ => unreachable!(),
                 }
                 self.color.truncate(self.length);
             }
